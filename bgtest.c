@@ -7,7 +7,7 @@ int main()
 	for (i = 1; i <= 10; i++) {
 		printf("background job...(%d)\n", i);
 		fflush(stdout);
-		sleep(1);
+		sleep(10);
 	}
 
 	return 0;
