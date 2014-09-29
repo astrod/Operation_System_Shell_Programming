@@ -49,10 +49,10 @@ int change_directory(int argc, char **argv);
 int print_working_directory(char **argv);
 int make_directory(int argc, char **argv);
 int remove_directory(int argc, char **argv);
-int copy_directory(int argc, char **argv);
+int copy_directory(void **argv);
 int list_all(int argc, char **argv);
 int changeFileDescriptor(char ** argv);
-void * thread_fn(void *arg);
+int dcp(int argc, char ** argv);
 
 //예외 처리 함수
 int file_open_check(FILE* stream);
@@ -119,8 +119,6 @@ void process_cmd(char *cmdline)
      * 자식 프로세스를 생성하여 프로그램을 실행한다.
      */
      // 프로세스 생성
-     printf("redirectFlag : %d\n", redirectFlag);
-     printf("pipeFlag : %d\n", pipeFlag);
 
         if(pipe(pipeLine) < 0) printf("pipe error\n");
         pid = fork();
@@ -134,10 +132,6 @@ void process_cmd(char *cmdline)
                 for(i=0; i<pipeFlag-1; i++)
                 {
                     argList[i] = argv[i];
-                }
-                for(i=0; i<pipeFlag-1; i++)
-                {
-                    printf("argListForChild : %s\n", argList[i]);
                 }
                 argList[pipeFlag-1] = NULL;
                 dup2(pipeLine[1], 1);
@@ -292,7 +286,10 @@ int builtin_cmd(int argc, char **argv)
     } else if(!strcmp(argv[0], "ll")) {
         list_all(argc, argv);
         return 0;
-    } 
+    } else if(!strcmp(argv[0], "dcp")) {
+        dcp(argc, argv);
+        return 0;
+    }
 
 
     // 내장 명령어가 아님.
@@ -477,18 +474,72 @@ int remove_directory(int argc, char **argv)
 }
 
 
-int copy_directory(int argc, char **argv)
+int copy_directory(void **argv)
 {
-    pthread_t tid[MAXTHREAD];
-    int i;
-    for(i=0; i<MAXTHREAD; i++)
+    pthread_mutex_t thread_lock = PTHREAD_MUTEX_INITIALIZER;
+    DIR *dp = NULL;
+    struct dirent * entry = NULL;
+    char **argvArray = (char**)argv;
+    char fromPath[MAXPATH];
+    char toPath[MAXPATH];
+    FILE* fromStream;
+    FILE* toStream;
+    int input;
+    int file_state;
+    int value;
+    int mkdirResult;
+
+    //폴더가 없으면 생성한다.
+    if(access(argvArray[2], F_OK)<0) mkdirResult = mkdir(argvArray[2], 0755);
+    if(mkdirResult == -1)
     {
-        pthread_mutex_lock(&thread_lock);
-        pthread_create(&tid[i], NULL, thread_fn, (void*)i);
-        pthread_mutex_unlock(&thread_lock);
+        printf("usage : mkdir + folder_name. not overlapping \n");
+        return 0;
     }
 
+    dp = opendir(argvArray[1]);
+    
+    while((entry = readdir(dp)) != NULL) 
+    {
+        if(entry->d_type != DT_DIR)
+        {
+            pthread_mutex_lock(&thread_lock);
+            strcpy(fromPath, argvArray[1]);
+            strcat(fromPath, "/");
+            strcat(fromPath, entry->d_name);
+            fromStream = fopen(fromPath, "rb");
+
+            strcpy(toPath, argvArray[2]);
+            strcat(toPath, "/");
+            strcat(toPath, entry->d_name);
+            if(access(toPath, F_OK) < 0) printf("copy from %s to %s \n", fromPath, toPath);
+            toStream = fopen(toPath, "wb");
+
+            if(file_open_check(fromStream) || file_open_check(toStream))
+            {
+                printf("usage : mv + start_pos_file + end_pos_file \n");
+                return 0;
+            }
+
+            while(input !=EOF) 
+            {
+                input = fgetc(fromStream);
+                fputc(input, toStream);
+            }
+
+            file_state = fclose(fromStream);
+            file_close_check(file_state);
+
+            file_state = fclose(toStream);
+            file_close_check(file_state);
+            pthread_mutex_unlock(&thread_lock);
+        }
+    }
+
+    closedir(dp);
+
     return 0;
+
 }
 
 int list_all(int argc, char **argv)
@@ -554,7 +605,7 @@ int list_all(int argc, char **argv)
         printf("%s  ", gr->gr_name);
         printf("%9lld   ", statBuf.st_size);
 
-        d= strftime(monthBuf, 20, "%b  %e  %r", localtime(&statBuf.st_ctime));
+        d= strftime(monthBuf, 20, "%b  %M:%S", localtime(&statBuf.st_ctime));
 
         printf("%s  ", monthBuf);
         printf("%s\n", entry->d_name);
@@ -606,12 +657,20 @@ int changeFileDescriptor(char ** argv)
 
     return saved_stdout;
 }
-void * thread_fn(void *arg)
+
+int dcp(int argc, char ** argv)
 {
-    pthread_mutex_t thread_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_lock(&thread_lock);
-    //crtical section;
-    pthread_mutex_unlock(&thread_lock);
+    pthread_t tid[MAXTHREAD];
+    int i, mkdirResult;
 
+    for(i=0; i<MAXTHREAD; i++)
+    {
+        pthread_create(&tid[i], NULL, copy_directory, (void**)argv);
+    }
+    for(i=0; i<MAXTHREAD; i++)
+    {
+        pthread_join(tid[i], NULL);
+    }
 
+    return 0;
 }
